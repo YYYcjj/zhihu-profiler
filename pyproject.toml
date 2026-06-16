@@ -43,6 +43,8 @@ dependencies = [
     "lxml>=4.9",
     "matplotlib>=3.7",
     "tqdm>=4.65",
+    "fastapi>=0.109",
+    "uvicorn>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -60,12 +62,12 @@ dev = [
 
 [project.scripts]
 zhihu-profiler = "zhihu_profiler.cli:main"
-zhihu-profiler-analyze = "zhihu_profiler.cli:analyze"
+zhihu-profiler-web = "zhihu_profiler.cli:web"
 
 [project.urls]
-Homepage = "https://github.com/yourname/zhihu-profiler"
-Documentation = "https://github.com/yourname/zhihu-profiler#readme"
-Repository = "https://github.com/yourname/zhihu-profiler"
+Homepage = "https://github.com/YYYcjj/zhihu-profiler"
+Documentation = "https://github.com/YYYcjj/zhihu-profiler#readme"
+Repository = "https://github.com/YYYcjj/zhihu-profiler"
 
 [tool.setuptools.packages.find]
 include = ["zhihu_profiler*"]

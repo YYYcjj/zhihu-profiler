@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zhihu Profiler - 知乎人物画像</title>
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #f8f9fc;
+  --card: #ffffff;
+  --primary: #6c5ce7;
+  --primary-light: #a29bfe;
+  --text: #2d3436;
+  --text-secondary: #636e72;
+  --border: #eef0f5;
+  --success: #00b894;
+  --danger: #e17055;
+  --radius: 14px;
+  --shadow: 0 2px 16px rgba(0,0,0,0.06);
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+.container { max-width: 800px; margin: 0 auto; padding: 24px 20px 60px; }
+
+/* Header */
+.header {
+  text-align: center;
+  padding: 40px 0 32px;
+}
+.header h1 {
+  font-size: 2em;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 8px;
+}
+.header p { color: var(--text-secondary); font-size: 1.05em; }
+
+/* Input Section */
+.input-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
+  margin-bottom: 24px;
+}
+.input-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.input-row input {
+  flex: 1;
+  padding: 14px 18px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  font-size: 1em;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.input-row input:focus { border-color: var(--primary); }
+.input-row input::placeholder { color: #b2bec3; }
+.btn {
+  padding: 14px 28px;
+  border: none;
+  border-radius: 10px;
+  font-size: 1em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+.btn-primary:hover { background: #5b4cdb; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-outline {
+  background: transparent;
+  border: 2px solid var(--border);
+  color: var(--text-secondary);
+}
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+.btn-sm {
+  padding: 8px 16px;
+  font-size: 0.85em;
+  border-radius: 8px;
+}
+.btn-danger { color: var(--danger); }
+.btn-danger:hover { background: #fff5f3; border-color: var(--danger); }
+.options-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 0.88em;
+  color: var(--text-secondary);
+}
+.options-row select {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.88em;
+  background: white;
+  outline: none;
+}
+
+/* Progress */
+.progress-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 32px 28px;
+  margin-bottom: 24px;
+  text-align: center;
+  display: none;
+}
+.progress-card.active { display: block; }
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 16px 0;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--primary-light));
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+.progress-card .status-text {
+  color: var(--text-secondary);
+  font-size: 0.95em;
+  margin-top: 8px;
+}
+.progress-card .spinner {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Report */
+.report-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin-bottom: 24px;
+  display: none;
+}
+.report-card.active { display: block; }
+.report-card iframe {
+  width: 100%;
+  height: 600px;
+  border: none;
+}
+
+/* Profile Summary */
+.profile-summary {
+  padding: 24px 28px;
+  border-bottom: 1px solid var(--border);
+}
+.profile-summary h2 {
+  font-size: 1.3em;
+  margin-bottom: 12px;
+  color: var(--primary);
+}
+.stat-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.stat-item {
+  text-align: center;
+  padding: 10px 16px;
+  background: #f8f9fc;
+  border-radius: 8px;
+  min-width: 80px;
+}
+.stat-item .value { font-size: 1.3em; font-weight: 700; color: var(--primary); }
+.stat-item .label { font-size: 0.78em; color: var(--text-secondary); margin-top: 2px; }
+
+/* History */
+.history-section {
+  margin-top: 40px;
+}
+.history-section h2 {
+  font-size: 1.15em;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.history-item:hover { transform: translateX(4px); box-shadow: var(--shadow); }
+.history-item .hi-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 1.1em;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.history-item .hi-avatar img { width:100%; height:100%; object-fit:cover; }
+.history-item .hi-info { flex: 1; }
+.history-item .hi-name { font-weight: 600; font-size: 1em; }
+.history-item .hi-meta { font-size: 0.82em; color: var(--text-secondary); }
+.history-item .hi-actions { display: flex; gap: 8px; }
+
+.empty-state {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-secondary);
+}
+.empty-state .icon { font-size: 2.5em; margin-bottom: 12px; opacity: 0.4; }
+
+.error-message {
+  background: #fff5f3;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 14px 20px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-size: 0.9em;
+  display: none;
+}
+
+.hidden { display: none !important; }
+
+/* Responsive */
+@media (max-width: 600px) {
+  .input-row { flex-direction: column; }
+  .btn { width: 100%; }
+  .header h1 { font-size: 1.5em; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>Zhihu Profiler</h1>
+    <p>输入知乎用户链接，AI 自动生成深度人格画像</p>
+  </div>
+
+  <div class="input-card">
+    <div class="input-row">
+      <input
+        type="text"
+        id="urlInput"
+        placeholder="粘贴知乎用户链接或用户 ID，如 https://www.zhihu.com/people/xxx"
+        autocomplete="off"
+      >
+      <button class="btn btn-primary" id="analyzeBtn" onclick="startAnalysis()">开始分析</button>
+    </div>
+    <div class="options-row">
+      <span>最多抓取</span>
+      <select id="maxAnswers">
+        <option value="50">50 条</option>
+        <option value="100">100 条</option>
+        <option value="200" selected>200 条</option>
+        <option value="500">500 条</option>
+      </select>
+      <span> 回答进行分析</span>
+    </div>
+  </div>
+
+  <div class="error-message" id="errorMsg"></div>
+
+  <div class="progress-card" id="progressCard">
+    <div class="spinner"></div>
+    <h3 id="progressTitle">准备中...</h3>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <div class="status-text" id="progressMessage">等待开始</div>
+  </div>
+
+  <div class="report-card" id="reportCard">
+    <div class="profile-summary" id="profileSummary"></div>
+    <iframe id="reportFrame"></iframe>
+  </div>
+
+  <div class="history-section" id="historySection">
+    <h2>历史分析</h2>
+    <div class="history-list" id="historyList"></div>
+    <div class="empty-state" id="emptyHistory">
+      <div class="icon">&nbsp;</div>
+      <p>暂无历史分析记录</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '';
+
+let currentJobId = null;
+let pollTimer = null;
+
+async function startAnalysis() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+
+  const maxAnswers = parseInt(document.getElementById('maxAnswers').value);
+
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('errorMsg').style.display = 'none';
+  document.getElementById('reportCard').classList.remove('active');
+  document.getElementById('progressCard').classList.add('active');
+  document.getElementById('progressTitle').textContent = '提交分析任务...';
+  document.getElementById('progressMessage').textContent = '连接服务器';
+  document.getElementById('progressFill').style.width = '5%';
+
+  try {
+    const res = await fetch(`${API}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, max_answers: maxAnswers })
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || '请求失败');
+    const data = await res.json();
+    currentJobId = data.job_id;
+    pollProgress();
+  } catch (err) {
+    showError(err.message);
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('progressCard').classList.remove('active');
+  }
+}
+
+async function pollProgress() {
+  if (!currentJobId) return;
+
+  try {
+    const res = await fetch(`${API}/api/analyze/${currentJobId}`);
+    if (!res.ok) throw new Error('查询失败');
+    const job = await res.json();
+
+    document.getElementById('progressFill').style.width = job.progress + '%';
+    document.getElementById('progressMessage').textContent = job.message;
+
+    if (job.status === 'scraping') {
+      document.getElementById('progressTitle').textContent = '正在抓取数据...';
+    } else if (job.status === 'analyzing') {
+      document.getElementById('progressTitle').textContent = '正在分析中...';
+    } else if (job.status === 'completed') {
+      document.getElementById('progressCard').classList.remove('active');
+      document.getElementById('analyzeBtn').disabled = false;
+      showReport(currentJobId);
+      loadHistory();
+      return;
+    } else if (job.status === 'failed') {
+      document.getElementById('progressCard').classList.remove('active');
+      document.getElementById('analyzeBtn').disabled = false;
+      showError(job.message || '分析失败');
+      return;
+    }
+
+    pollTimer = setTimeout(pollProgress, 1500);
+  } catch (err) {
+    showError(err.message);
+    document.getElementById('progressCard').classList.remove('active');
+    document.getElementById('analyzeBtn').disabled = false;
+  }
+}
+
+async function showReport(jobId) {
+  try {
+    const [profileRes] = await Promise.all([
+      fetch(`${API}/api/analyze/${jobId}/profile`)
+    ]);
+
+    if (profileRes.ok) {
+      const profile = await profileRes.json();
+      renderProfileSummary(profile);
+    }
+
+    document.getElementById('reportFrame').src = `${API}/api/analyze/${jobId}/report`;
+    document.getElementById('reportCard').classList.add('active');
+    document.getElementById('reportCard').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function renderProfileSummary(profile) {
+  const summary = document.getElementById('profileSummary');
+  summary.innerHTML = `
+    <h2>${profile.name || '分析结果'}</h2>
+    <div class="stat-row">
+      <div class="stat-item">
+        <div class="value">${profile.answers || 0}</div>
+        <div class="label">回答数</div>
+      </div>
+      <div class="stat-item">
+        <div class="value">${formatNum(profile.chars || 0)}</div>
+        <div class="label">总字数</div>
+      </div>
+      <div class="stat-item">
+        <div class="value">${formatNum(profile.upvotes || 0)}</div>
+        <div class="label">总赞同</div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API}/api/history`);
+    if (!res.ok) return;
+    const history = await res.json();
+
+    const list = document.getElementById('historyList');
+    const empty = document.getElementById('emptyHistory');
+
+    if (history.length === 0) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+
+    empty.style.display = 'none';
+    list.innerHTML = history.map(item => `
+      <div class="history-item" onclick="viewHistory('${item.id}')">
+        <div class="hi-avatar">
+          ${item.avatar ? `<img src="${item.avatar}" alt="">` : item.name[0]}
+        </div>
+        <div class="hi-info">
+          <div class="hi-name">${item.name}</div>
+          <div class="hi-meta">${item.answers} 条回答 · ${formatDate(item.date)}</div>
+        </div>
+        <div class="hi-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-sm btn-outline" onclick="viewHistory('${item.id}')">查看</button>
+          <button class="btn btn-sm btn-outline btn-danger" onclick="deleteHistory('${item.id}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function viewHistory(id) {
+  document.getElementById('reportCard').classList.remove('active');
+  document.getElementById('progressCard').classList.add('active');
+  document.getElementById('progressTitle').textContent = '加载历史报告...';
+  document.getElementById('progressMessage').textContent = '正在加载';
+  document.getElementById('progressFill').style.width = '50%';
+
+  currentJobId = id;
+
+  try {
+    await fetch(`${API}/api/analyze/${id}/report`);
+    document.getElementById('progressCard').classList.remove('active');
+    showReport(id);
+  } catch {
+    document.getElementById('progressCard').classList.remove('active');
+    showError('报告加载失败');
+  }
+}
+
+async function deleteHistory(id) {
+  if (!confirm('确定删除这条分析记录吗？')) return;
+
+  try {
+    await fetch(`${API}/api/history/${id}`, { method: 'DELETE' });
+    loadHistory();
+    if (currentJobId === id) {
+      document.getElementById('reportCard').classList.remove('active');
+    }
+  } catch (err) {
+    showError('删除失败');
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 8000);
+}
+
+function formatNum(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function formatDate(d) {
+  const date = new Date(d);
+  const now = new Date();
+  const diff = now - date;
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+  return date.toLocaleDateString('zh-CN');
+}
+
+// Enter key to submit
+document.getElementById('urlInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') startAnalysis();
+});
+
+// Load history on page load
+loadHistory();
+</script>
+</body>
+</html>

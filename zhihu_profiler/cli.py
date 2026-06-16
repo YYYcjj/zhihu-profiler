@@ -229,5 +229,44 @@ def report(profile_file: Path, output: Path | None):
     webbrowser.open(f"file://{path.absolute()}")
 
 
+@main.command()
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help="Host to bind to",
+)
+@click.option(
+    "--port", "-p",
+    default=8765,
+    type=int,
+    help="Port to listen on",
+)
+@click.option(
+    "--no-open",
+    is_flag=True,
+    help="Don't open browser automatically",
+)
+def web(host: str, port: int, no_open: bool):
+    """Launch the web interface for Zhihu Profiler."""
+    console.print()
+    console.print(Panel.fit(
+        "[bold magenta]Zhihu Profiler[/bold magenta] · Web Interface",
+        border_style="magenta",
+    ))
+    console.print()
+
+    if not no_open:
+        import webbrowser
+        webbrowser.open(f"http://{host}:{port}")
+
+    console.print(f"[green]Starting web server at http://{host}:{port}[/green]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+    console.print()
+
+    import uvicorn
+    from .web.server import app
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     main()

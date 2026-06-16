@@ -13,6 +13,23 @@ Deep personality profiling through Zhihu answer analysis.
 - **价值体系分析** - Schwartz 理论框架，识别核心价值观与内在张力
 - **表达风格量化** - 句长、词汇丰富度、修辞手法、结构偏好等多维度量化
 - **交互式报告** - 自包含 HTML 报告，含 ECharts 图表，可直接分享
+- **Web 界面** - 本地 Web 应用，输入链接即可分析，支持历史记录保存与查看
+
+## Web UI
+
+```bash
+# 启动 Web 界面
+zhihu-profiler web
+
+# 自定义端口
+zhihu-profiler web --port 8080
+```
+
+打开浏览器访问 `http://127.0.0.1:8765`，粘贴知乎用户链接即可开始分析。
+
+- 实时进度条，展示抓取和分析状态
+- 分析结果自动保存，支持历史记录浏览
+- 一键删除不再需要的分析记录
 
 ## Architecture
 
@@ -33,6 +50,10 @@ zhihu-profiler/
 │   │   └── profiler.py       # 主分析器
 │   ├── viz/              # 可视化层
 │   │   └── dashboard.py      # HTML 报告生成
+│   ├── web/              # Web 界面
+│   │   ├── server.py         # FastAPI 后端
+│   │   └── static/
+│   │       └── index.html    # 前端页面
 │   └── cli.py            # 命令行入口
 ├── examples/
 │   └── basic_usage.py
@@ -45,7 +66,7 @@ zhihu-profiler/
 
 ```bash
 # Clone
-git clone https://github.com/yourname/zhihu-profiler.git
+git clone https://github.com/YYYcjj/zhihu-profiler.git
 cd zhihu-profiler
 
 # Create virtual environment
@@ -201,6 +222,7 @@ zhihu-profiler analyze <user> --no-headless
 
 ## Roadmap
 
+- [x] Web UI 界面
 - [ ] 接入 BERT/RoBERTa 模型做更精准的情感分析
 - [ ] 知识图谱构建 (回答的实体-关系网络)
 - [ ] 多用户对比分析
