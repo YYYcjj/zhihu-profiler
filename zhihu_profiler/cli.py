@@ -26,7 +26,7 @@ console = Console()
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
-    handlers=[RichHandler(rich_trackbacks=True, console=console)],
+    handlers=[RichHandler(console=console)],
 )
 logger = logging.getLogger("zhihu-profiler")
 
