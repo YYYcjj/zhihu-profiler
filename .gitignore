@@ -33,6 +33,7 @@ playwright-browser/
 user_data/
 .browser_data/
 .analyses/
+.zhihu_cookies
 
 # Jupyter
 .ipynb_checkpoints/
