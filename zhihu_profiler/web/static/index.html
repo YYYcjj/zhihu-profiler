@@ -276,6 +276,18 @@ body {
   <div class="header">
     <h1>Zhihu Profiler</h1>
     <p>输入知乎用户链接，AI 自动生成深度人格画像</p>
+    <div id="authStatus" style="margin-top:12px;font-size:0.85em;padding:6px 16px;border-radius:20px;display:inline-block;background:#fff5f3;color:#e17055;">未登录知乎 · 可能无法获取完整内容</div>
+  </div>
+
+  <div class="input-card" id="cookieCard" style="display:none; margin-bottom:12px; padding:16px 28px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="font-size:0.9em;color:var(--text-secondary);">知乎 Cookie（从浏览器 DevTools → Application → Cookies 复制整段 cookie 字符串）</span>
+      <button class="btn btn-sm btn-outline" onclick="document.getElementById('cookieCard').style.display='none'">✕</button>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="cookieInput" placeholder="粘贴知乎 cookie 字符串..." style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85em;">
+      <button class="btn btn-sm btn-primary" onclick="setCookie()">设置 Cookie</button>
+    </div>
   </div>
 
   <div class="input-card">
@@ -537,8 +549,50 @@ document.getElementById('urlInput').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') startAnalysis();
 });
 
-// Load history on page load
+// Load history and check auth on page load
 loadHistory();
+checkAuth();
+
+async function checkAuth() {
+  try {
+    const res = await fetch(`${API}/api/auth-status`);
+    if (res.ok) {
+      const data = await res.json();
+      const el = document.getElementById('authStatus');
+      if (data.authenticated) {
+        el.textContent = '已登录知乎 ✓';
+        el.style.background = '#eafaf1';
+        el.style.color = '#00b894';
+      } else {
+        el.textContent = '未登录知乎 · 点击此处设置 Cookie';
+        el.style.cursor = 'pointer';
+        el.onclick = () => document.getElementById('cookieCard').style.display='block';
+      }
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function setCookie() {
+  const cookie = document.getElementById('cookieInput').value.trim();
+  if (!cookie) return;
+  try {
+    const res = await fetch(`${API}/api/set-cookie`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie })
+    });
+    if (res.ok) {
+      document.getElementById('cookieCard').style.display = 'none';
+      document.getElementById('cookieInput').value = '';
+      checkAuth();
+    } else {
+      const err = await res.json();
+      showError('Cookie 无效: ' + (err.detail || '请确保包含 z_c0 和 _xsrf'));
+    }
+  } catch(e) {
+    showError('设置失败: ' + e.message);
+  }
+}
 </script>
 </body>
 </html>

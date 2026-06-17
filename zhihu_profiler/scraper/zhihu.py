@@ -1,73 +1,69 @@
-"""Zhihu scraper using Playwright for browser automation.
+"""Zhihu scraper — cookie-based authenticated API + Playwright DOM fallback.
 
-Handles:
-- User profile data extraction via API
-- Answer extraction with API + DOM fallback
-- Anti-crawling measures (stealth browser, delays)
-- Cookie-based authentication persistence
+Inspired by syaning/zhihuapi-py: cookie-based auth is required for content access.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import random
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError as PwTimeout
+import httpx
+from playwright.async_api import async_playwright, BrowserContext, Page
 
 from .models import ZhihuAnswer, ZhihuUser, ScrapedData
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_USER_DATA = Path(__file__).parent.parent.parent / ".browser_data"
+# --- Constants ---
+BASE_URL = "https://www.zhihu.com"
+USER_DATA_DIR = Path(__file__).parent.parent.parent / ".browser_data"
+COOKIE_FILE = Path(__file__).parent.parent.parent / ".zhihu_cookies"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
 ]
 
-SELECTORS = {
-    "answer_item": ".List-item",
-    "answer_content": ".RichContent-inner",
-    "answer_content_fallback": ".RichText",
-    "question_title": ".QuestionHeader-title",
-    "question_link": ".ContentItem-title a",
-    "vote_count": ".VoteButton--up",
-    "expand_btn": ".Button.ContentItem-rightButton",
-}
-
-STEALTH_SCRIPT = """
+STEALTH = """
 Object.defineProperty(navigator, 'webdriver', { get: () => false });
-Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
 window.chrome = { runtime: {} };
 """
 
+# zhihuapi answer include params (tested working)
+ANSWERS_INCLUDE = (
+    "data[*].is_normal,admin_closed_comment,reward_info,is_collapsed,"
+    "annotation_action,annotation_detail,collapse_reason,collapsed_by,"
+    "suggest_edit,comment_count,can_comment,content,editable_content,"
+    "attachment,voteup_count,reshipment_settings,comment_permission,"
+    "mark_infos,created_time,updated_time,review_info,"
+    "question.detail,question.excerpt,question.topics"
+)
+
 
 class ZhihuScraper:
-    """Main scraper for Zhihu user data."""
-
     def __init__(
         self,
         headless: bool = True,
-        user_data_dir: Optional[Path] = None,
         max_answers: int = 500,
-        delay_range: tuple[float, float] = (1.5, 3.5),
+        delay_range: tuple[float, float] = (1.0, 2.5),
     ):
         self.headless = headless
-        self.user_data_dir = user_data_dir or DEFAULT_USER_DATA
         self.max_answers = max_answers
         self.delay_range = delay_range
         self._playwright = None
         self._context: Optional[BrowserContext] = None
+        self._cookies: dict[str, str] = {}
+        self._z_c0: str = ""
+        self._xsrf: str = ""
 
     async def __aenter__(self):
         await self.start()
@@ -76,57 +72,118 @@ class ZhihuScraper:
     async def __aexit__(self, *args):
         await self.stop()
 
-    async def start(self) -> None:
-        self.user_data_dir.mkdir(parents=True, exist_ok=True)
+    # ---- lifecycle ----
+
+    async def start(self):
         self._playwright = await async_playwright().start()
+        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self.user_data_dir),
+            user_data_dir=str(USER_DATA_DIR),
             headless=self.headless,
             viewport={"width": 1280, "height": 800},
             user_agent=random.choice(USER_AGENTS),
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-            ],
-            bypass_csp=True,
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        await self._context.add_init_script(STEALTH_SCRIPT)
-        logger.info("Browser launched")
+        await self._context.add_init_script(STEALTH)
 
-    async def stop(self) -> None:
+        # Load or extract cookies
+        await self._load_cookies()
+        logger.info("Browser ready, authenticated: %s", bool(self._z_c0))
+
+    async def stop(self):
         if self._context:
             await self._context.close()
         if self._playwright:
             await self._playwright.stop()
-        logger.info("Browser closed")
 
-    async def _random_delay(self, extra: float = 0) -> None:
-        await asyncio.sleep(random.uniform(*self.delay_range) + extra)
+    # ---- cookie management ----
 
-    async def _create_page(self) -> Page:
-        if not self._context:
-            raise RuntimeError("Browser not started")
+    async def _load_cookies(self):
+        """Load cookies from previous session or saved file."""
+        # 1. Try saved cookie file first
+        if COOKIE_FILE.exists():
+            raw = COOKIE_FILE.read_text().strip()
+            if raw:
+                self._parse_cookie_string(raw)
+                if self._z_c0:
+                    logger.info("Loaded cookies from file")
+                    return
+
+        # 2. Try existing browser context cookies
+        ctx_cookies = await self._context.cookies(BASE_URL)
+        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in ctx_cookies)
+        self._parse_cookie_string(cookie_str)
+
+    def _parse_cookie_string(self, cookie_str: str):
+        """Parse cookie string and extract z_c0 + _xsrf."""
+        for part in cookie_str.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                self._cookies[k.strip()] = v.strip()
+        self._z_c0 = self._cookies.get("z_c0", "")
+        self._xsrf = self._cookies.get("_xsrf", "")
+
+    async def ensure_login(self) -> bool:
+        """Check if authenticated; if not, open browser for manual login."""
+        if self._z_c0:
+            return True
+
+        if self.headless:
+            logger.warning("Not authenticated and running headless — scraping may fail")
+            return False
+
+        # Open Zhihu for manual login
         page = await self._context.new_page()
-        await page.set_extra_http_headers({
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        })
-        return page
-
-    async def _extract_user_from_api(self, user_id: str) -> ZhihuUser:
-        api_url = f"https://www.zhihu.com/api/v4/members/{user_id}"
-        page = await self._create_page()
         try:
-            resp = await page.goto(api_url, wait_until="networkidle", timeout=15000)
-            if not resp or not resp.ok:
-                raise ValueError(f"Profile API failed: {resp.status if resp else 'no response'}")
-            data = await resp.json()
+            await page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
+            logger.info("Please log in to Zhihu in the opened browser window...")
+            logger.info("Waiting up to 120 seconds for login...")
+
+            for _ in range(120):
+                await asyncio.sleep(1)
+                cookies = await self._context.cookies(BASE_URL)
+                for c in cookies:
+                    if c["name"] == "z_c0":
+                        self._parse_cookie_string("; ".join(f"{co['name']}={co['value']}" for co in cookies))
+                        # Save for future
+                        COOKIE_FILE.write_text(
+                            "; ".join(f"{co['name']}={co['value']}" for co in cookies)
+                        )
+                        logger.info("Login successful!")
+                        return True
+            return False
         finally:
             await page.close()
 
+    # ---- HTTP helpers (cookie-based, like zhihuapi) ----
+
+    def _api_headers(self) -> dict:
+        return {
+            "Cookie": "; ".join(f"{k}={v}" for k, v in self._cookies.items()),
+            "Authorization": f"Bearer {self._z_c0}" if self._z_c0 else "",
+            "Referer": BASE_URL,
+            "User-Agent": random.choice(USER_AGENTS),
+            "X-Xsrftoken": self._xsrf,
+        }
+
+    async def _api_get(self, path: str, params: dict = None) -> dict:
+        """Make authenticated GET to Zhihu API."""
+        url = f"{BASE_URL}{path}"
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(url, headers=self._api_headers(), params=params)
+            if resp.status_code == 401 or resp.status_code == 403:
+                logger.warning("API auth failed (status %d), response: %s", resp.status_code, resp.text[:200])
+            resp.raise_for_status()
+            return resp.json()
+
+    # ---- scraping ----
+
+    async def _fetch_profile(self, user_id: str) -> ZhihuUser:
+        data = await self._api_get(f"/api/v4/members/{user_id}")
         return ZhihuUser(
             id=data.get("id", user_id),
             name=data.get("name", ""),
@@ -145,187 +202,147 @@ class ZhihuScraper:
             raw_json=data,
         )
 
-    async def _scrape_answers_from_api(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
-        """Scrape answers via Zhihu API."""
+    async def _fetch_answers(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
         answers = []
         offset = 0
-        limit = 20
-        page_count = 0
-        empty_pages = 0
+        page = 0
 
-        page = await self._create_page()
-        try:
-            while len(answers) < max_items and empty_pages < 3:
-                api_url = (
-                    f"https://www.zhihu.com/api/v4/members/{user_id}/answers"
-                    f"?include=data[*].is_normal,admin_closed_comment,"
-                    f"reward_info,is_collapsed,annotation_action,annotation_detail,"
-                    f"collapse_reason,collapsed_by,suggest_edit,comment_count,"
-                    f"can_comment,content,editable_content,attachment,voteup_count,"
-                    f"reshipment_settings,comment_permission,"
-                    f"created_time,updated_time,review_info,"
-                    f"question.detail,question.excerpt,question.topics,"
-                    f"&offset={offset}&limit={limit}&sort_by=created"
-                )
+        while len(answers) < max_items:
+            params = {
+                "offset": offset,
+                "limit": 20,
+                "sort_by": "created",
+                "include": ANSWERS_INCLUDE,
+            }
+            try:
+                data = await self._api_get(f"/api/v4/members/{user_id}/answers", params)
+            except Exception as e:
+                logger.error("API error at offset %d: %s", offset, e)
+                break
 
-                resp = await page.goto(api_url, wait_until="networkidle", timeout=20000)
-                if not resp or not resp.ok:
-                    logger.warning(f"API error at offset {offset}: {resp.status if resp else 'no response'}")
-                    break
+            items = data.get("data", [])
+            paging = data.get("paging", {})
 
-                data = await resp.json()
-                items = data.get("data", [])
-                paging = data.get("paging", {})
-                is_end = paging.get("is_end", False)
+            if not items:
+                break
 
-                if not items:
-                    empty_pages += 1
-                    if is_end:
-                        break
-                    offset += limit
+            for item in items:
+                question = item.get("question", {})
+                content = item.get("content", "")
+
+                if not content:
                     continue
 
-                empty_pages = 0
-                for item in items:
-                    question = item.get("question", {})
-                    content = item.get("content", "") or item.get("excerpt", "")
+                answers.append(ZhihuAnswer(
+                    id=item.get("id", 0),
+                    question_id=question.get("id", 0),
+                    question_title=question.get("title", ""),
+                    content=self._strip_html(content),
+                    excerpt=item.get("excerpt", ""),
+                    voteup_count=item.get("voteup_count", 0),
+                    comment_count=item.get("comment_count", 0),
+                    created_time=self._ts(item.get("created_time")),
+                    updated_time=self._ts(item.get("updated_time")),
+                    question_topics=[t.get("name", "") for t in (question.get("topics") or [])],
+                    url=f"{BASE_URL}/question/{question.get('id')}/answer/{item.get('id')}",
+                ))
 
-                    if not content and not question:
-                        continue
+            offset += 20
+            page += 1
+            logger.info("Page %d: %d answers total", page, len(answers))
 
-                    clean_content = self._strip_html(content)
-                    answers.append(ZhihuAnswer(
-                        id=item.get("id", 0),
-                        question_id=question.get("id", 0),
-                        question_title=question.get("title", ""),
-                        content=clean_content,
-                        excerpt=item.get("excerpt", ""),
-                        voteup_count=item.get("voteup_count", 0),
-                        comment_count=item.get("comment_count", 0),
-                        created_time=self._parse_timestamp(item.get("created_time")),
-                        updated_time=self._parse_timestamp(item.get("updated_time")),
-                        question_topics=[
-                            t.get("name", "") for t in (question.get("topics") or [])
-                        ],
-                        url=f"https://www.zhihu.com/question/{question.get('id')}/answer/{item.get('id')}",
-                    ))
-
-                offset += limit
-                page_count += 1
-                logger.info(f"API page {page_count}: {len(answers)} answers")
-
-                if is_end:
-                    break
-
-                await self._random_delay()
-        finally:
-            await page.close()
+            if paging.get("is_end"):
+                break
+            await asyncio.sleep(random.uniform(*self.delay_range))
 
         return answers
 
-    async def _scrape_answers_from_list_page(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
-        """Scrape answers by rendering the user's answer list page."""
+    async def _scrape_via_dom(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
+        """DOM fallback for when API doesn't have auth."""
         answers = []
-        url = f"https://www.zhihu.com/people/{user_id}/answers?sort_by=created"
-        page = await self._create_page()
+        url = f"{BASE_URL}/people/{user_id}/answers?sort_by=created"
+        page = await self._context.new_page()
 
         try:
             await page.goto(url, wait_until="networkidle", timeout=30000)
-            await self._random_delay(2)
+            await asyncio.sleep(2)
 
-            scroll_count = 0
-            prev_count = 0
+            scroll = 0
+            prev = 0
             stall = 0
 
-            while len(answers) < max_items:
-                items = await page.query_selector_all(SELECTORS["answer_item"])
-                new_items = items[len(answers):]
-
-                for el in new_items:
+            while len(answers) < max_items and scroll < 60:
+                items = await page.query_selector_all(".List-item")
+                for el in items[len(answers):]:
                     try:
-                        # Try to expand truncated answer
-                        expand = await el.query_selector(SELECTORS["expand_btn"])
+                        # Click "展开阅读全文" if present
+                        expand = await el.query_selector("button")
                         if expand:
-                            await expand.click()
-                            await asyncio.sleep(0.3)
+                            btn_text = await expand.inner_text()
+                            if "展开" in btn_text or "阅读全文" in btn_text:
+                                await expand.click()
+                                await asyncio.sleep(0.5)
 
                         # Extract content
-                        content = ""
-                        for sel in [SELECTORS["answer_content"], SELECTORS["answer_content_fallback"]]:
-                            content_el = await el.query_selector(sel)
-                            if content_el:
-                                content = await content_el.inner_text()
-                                if content.strip():
-                                    break
-
-                        if not content or len(content) < 10:
+                        content_el = await el.query_selector(".RichContent-inner, .RichText")
+                        if not content_el:
+                            continue
+                        content = (await content_el.inner_text()).strip()
+                        if len(content) < 20:
                             continue
 
-                        # Extract question title
-                        qtitle = ""
-                        qlink = await el.query_selector(SELECTORS["question_link"])
-                        if qlink:
-                            qtitle = await qlink.inner_text()
+                        # Try to get question title
+                        qlink = await el.query_selector(".ContentItem-title a, h2 a")
+                        qtitle = (await qlink.inner_text()).strip() if qlink else ""
 
                         answers.append(ZhihuAnswer(
-                            id=0, question_id=0, question_title=qtitle.strip(),
-                            content=content.strip(),
+                            id=0, question_id=0, question_title=qtitle,
+                            content=content,
                         ))
-                    except Exception as e:
+                    except Exception:
                         continue
 
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(random.uniform(2, 3))
-                scroll_count += 1
+                scroll += 1
 
-                if len(answers) == prev_count:
+                if len(answers) == prev:
                     stall += 1
                     if stall >= 3:
-                        logger.info(f"No new items after {stall} scrolls, stopping")
                         break
                 else:
                     stall = 0
-                    prev_count = len(answers)
-                    logger.info(f"Scroll {scroll_count}: {len(answers)} answers")
-
-                if scroll_count > 50:
-                    break
+                    prev = len(answers)
+                    logger.info("Scroll %d: %d answers", scroll, len(answers))
         finally:
             await page.close()
 
         return answers
 
-    async def scrape_user(self, user_id_or_url: str) -> ScrapedData:
-        user_id = self._extract_user_id(user_id_or_url)
-        logger.info(f"Scraping user: {user_id}")
+    async def scrape_user(self, input_str: str) -> ScrapedData:
+        user_id = self._extract_id(input_str)
+        logger.info("Scraping: %s", user_id)
 
-        # Step 1: Profile
-        logger.info("Fetching profile...")
-        user = await self._extract_user_from_api(user_id)
-        logger.info(f"User: {user.name} | {user.answer_count} answers | {user.follower_count} followers")
+        # Profile
+        user = await self._fetch_profile(user_id)
+        logger.info("User: %s | %d answers | %d followers",
+                     user.name, user.answer_count, user.follower_count)
 
+        # Answers
         answers = []
         if user.answer_count > 0:
             target = min(self.max_answers, user.answer_count)
-            logger.info(f"Scraping answers (target: {target})...")
 
-            # Strategy 1: API
-            try:
-                answers = await self._scrape_answers_from_api(user_id, target)
-            except Exception as e:
-                logger.warning(f"API scraping failed: {e}")
+            if self._z_c0:
+                # Authenticated API
+                logger.info("Using authenticated API (target: %d)...", target)
+                answers = await self._fetch_answers(user_id, target)
+            else:
+                # Unauthenticated DOM
+                logger.info("No auth — using DOM scraping (target: %d)...", target)
+                answers = await self._scrape_via_dom(user_id, target)
 
-            # Strategy 2: Page scraping if API had few results
-            if len(answers) < min(3, target):
-                logger.info("API got few results, trying page scraping...")
-                try:
-                    page_answers = await self._scrape_answers_from_list_page(user_id, target)
-                    if len(page_answers) > len(answers):
-                        answers = page_answers
-                except Exception as e:
-                    logger.warning(f"Page scraping failed: {e}")
-
-            logger.info(f"Total scraped: {len(answers)} answers")
+            logger.info("Got %d answers", len(answers))
 
         return ScrapedData(
             user=user,
@@ -334,34 +351,22 @@ class ZhihuScraper:
             answers_scraped=len(answers),
         )
 
+    # ---- utils ----
+
     @staticmethod
-    def _extract_user_id(input_str: str) -> str:
-        match = re.search(r"zhihu\.com/people/([^/?\s]+)", input_str)
-        if match:
-            return match.group(1)
-        return input_str.strip("/")
+    def _extract_id(s: str) -> str:
+        m = re.search(r"zhihu\.com/people/([^/?\s]+)", s)
+        return m.group(1) if m else s.strip("/")
 
     @staticmethod
     def _strip_html(html: str) -> str:
         if not html:
             return ""
         text = re.sub(r"<[^>]+>", "", html)
-        text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-        text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
+        for e, c in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"), ("&nbsp;", " ")]:
+            text = text.replace(e, c)
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
-    def _parse_timestamp(ts: Optional[int]) -> Optional[datetime]:
-        if ts is None or ts == 0:
-            return None
-        return datetime.fromtimestamp(ts)
-
-
-async def quick_scrape(user_id_or_url: str, **kwargs) -> ScrapedData:
-    scraper = ZhihuScraper(**kwargs)
-    await scraper.start()
-    try:
-        return await scraper.scrape_user(user_id_or_url)
-    finally:
-        await scraper.stop()
+    def _ts(t: Optional[int]) -> Optional[datetime]:
+        return datetime.fromtimestamp(t) if t else None

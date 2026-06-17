@@ -31,6 +31,10 @@ STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 # In-memory job tracking
 jobs: dict[str, dict] = {}
 
+# Shared scraper instance (keeps browser alive for cookie persistence)
+_scraper: Optional[ZhihuScraper] = None
+_scraper_lock = asyncio.Lock()
+
 app = FastAPI(title="Zhihu Profiler", version="0.1.0")
 
 app.add_middleware(
@@ -56,6 +60,15 @@ class JobStatus(BaseModel):
     completed_at: str = ""
 
 
+async def get_scraper() -> ZhihuScraper:
+    global _scraper
+    async with _scraper_lock:
+        if _scraper is None:
+            _scraper = ZhihuScraper(headless=True, max_answers=500)
+            await _scraper.start()
+        return _scraper
+
+
 async def run_analysis(job_id: str, user_url: str, max_answers: int):
     """Run full analysis pipeline in background."""
     job = jobs[job_id]
@@ -65,8 +78,8 @@ async def run_analysis(job_id: str, user_url: str, max_answers: int):
         job["message"] = "正在抓取知乎数据..."
         job["progress"] = 10
 
-        async with ZhihuScraper(headless=True, max_answers=max_answers) as scraper:
-            data = await scraper.scrape_user(user_url)
+        scraper = await get_scraper()
+        data = await scraper.scrape_user(user_url)
 
         job["progress"] = 40
         job["message"] = f"已抓取 {data.answers_scraped} 条回答"
@@ -233,6 +246,35 @@ async def get_profile(job_id: str):
         raise HTTPException(status_code=400, detail="Analysis not completed")
 
     return job.get("profile", {})
+
+
+@app.get("/api/auth-status")
+async def auth_status():
+    """Check if the scraper has valid Zhihu cookies."""
+    try:
+        scraper = await get_scraper()
+        return {"authenticated": bool(scraper._z_c0), "has_cookies": len(scraper._cookies) > 0}
+    except Exception:
+        return {"authenticated": False, "has_cookies": False}
+
+
+@app.post("/api/set-cookie")
+async def set_cookie(data: dict):
+    """Set Zhihu cookie string for authenticated API access."""
+    cookie_str = data.get("cookie", "").strip()
+    if not cookie_str:
+        raise HTTPException(status_code=400, detail="Cookie string required")
+
+    scraper = await get_scraper()
+    scraper._parse_cookie_string(cookie_str)
+
+    if not scraper._z_c0:
+        raise HTTPException(status_code=400, detail="Invalid cookie: missing z_c0 token")
+
+    # Save to file
+    from ..scraper.zhihu import COOKIE_FILE
+    COOKIE_FILE.write_text(cookie_str)
+    return {"ok": True, "authenticated": True}
 
 
 # Serve static files
