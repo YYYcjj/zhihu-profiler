@@ -31,6 +31,8 @@ data/
 *.json.bak
 playwright-browser/
 user_data/
+.browser_data/
+.analyses/
 
 # Jupyter
 .ipynb_checkpoints/

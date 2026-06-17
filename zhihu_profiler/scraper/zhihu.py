@@ -27,7 +27,7 @@ from .models import ZhihuAnswer, ZhihuUser, ScrapedData
 logger = logging.getLogger(__name__)
 
 # Default user data directory for browser persistence
-DEFAULT_USER_DATA = Path.home() / ".zhihu_profiler" / "browser_data"
+DEFAULT_USER_DATA = Path(__file__).parent.parent.parent / ".browser_data"
 
 # Common Zhihu selectors
 SELECTORS = {

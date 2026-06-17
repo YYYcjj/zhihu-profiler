@@ -25,7 +25,7 @@ from ..viz.dashboard import ReportGenerator
 logger = logging.getLogger(__name__)
 
 # Storage
-STORAGE_DIR = Path.home() / ".zhihu_profiler" / "analyses"
+STORAGE_DIR = Path(__file__).parent.parent.parent / ".analyses"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory job tracking
