@@ -281,8 +281,8 @@ class ZhihuScraper:
                     answers.append(result)
 
             logger.info("Content: %d/%d answers", len(answers), len(summaries))
-            # Short sleep to avoid hitting rate limits
-            await asyncio.sleep(0.3)
+            # Small sleep to avoid rate limiting
+            await asyncio.sleep(0.5)
 
         return answers
 
