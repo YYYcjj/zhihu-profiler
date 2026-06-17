@@ -122,7 +122,7 @@ class PersonalityAnalyzer:
         """Score Big Five traits based on linguistic markers."""
         marker_sets = {
             "openness": (self.OPENNESS_MARKERS, 60),
-            "conscientiousness": (self.CONSECIENTIOUSNESS_MARKERS, 55),
+            "conscientiousness": (self.CONSCIENTIOUSNESS_MARKERS, 55),
             "extraversion": (self.EXTRAVERSION_MARKERS, 50),
             "agreeableness": (self.AGREEABLENESS_MARKERS, 55),
             "neuroticism": (self.NEUROTICISM_MARKERS, 45),
