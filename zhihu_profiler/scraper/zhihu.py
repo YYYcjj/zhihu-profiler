@@ -194,10 +194,10 @@ class ZhihuScraper:
     async def _api_get(self, path: str, params: dict = None) -> dict:
         """Make authenticated GET to Zhihu API."""
         url = f"{BASE_URL}{path}"
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=20, limits=httpx.Limits(max_connections=20)) as client:
             resp = await client.get(url, headers=self._api_headers(), params=params)
             if resp.status_code == 401 or resp.status_code == 403:
-                logger.warning("API auth failed (status %d), response: %s", resp.status_code, resp.text[:200])
+                logger.warning("API auth failed (status %d)", resp.status_code)
             resp.raise_for_status()
             return resp.json()
 
@@ -258,15 +258,15 @@ class ZhihuScraper:
 
             if paging.get("is_end"):
                 break
-            await asyncio.sleep(random.uniform(*self.delay_range))
+            # No delay between list pages — the individual content fetches are the bottleneck
 
         if not summaries:
             return []
 
-        # Step 2: Fetch full content for each answer (batched)
+        # Step 2: Fetch full content for each answer (batched parallel)
         logger.info("Fetching content for %d answers...", len(summaries))
         answers = []
-        batch_size = 5  # Parallel requests per batch
+        batch_size = 10  # Parallel requests per batch
 
         for i in range(0, len(summaries), batch_size):
             batch = summaries[i:i + batch_size]
@@ -281,7 +281,8 @@ class ZhihuScraper:
                     answers.append(result)
 
             logger.info("Content: %d/%d answers", len(answers), len(summaries))
-            await asyncio.sleep(random.uniform(*self.delay_range))
+            # Short sleep to avoid hitting rate limits
+            await asyncio.sleep(0.3)
 
         return answers
 
