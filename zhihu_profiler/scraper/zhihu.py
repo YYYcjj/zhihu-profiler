@@ -123,31 +123,62 @@ class ZhihuScraper:
             return True
 
         if self.headless:
-            logger.warning("Not authenticated and running headless — scraping may fail")
             return False
 
-        # Open Zhihu for manual login
         page = await self._context.new_page()
         try:
             await page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
-            logger.info("Please log in to Zhihu in the opened browser window...")
-            logger.info("Waiting up to 120 seconds for login...")
-
+            logger.info("Please log in — waiting up to 120s...")
             for _ in range(120):
                 await asyncio.sleep(1)
                 cookies = await self._context.cookies(BASE_URL)
                 for c in cookies:
                     if c["name"] == "z_c0":
                         self._parse_cookie_string("; ".join(f"{co['name']}={co['value']}" for co in cookies))
-                        # Save for future
-                        COOKIE_FILE.write_text(
-                            "; ".join(f"{co['name']}={co['value']}" for co in cookies)
-                        )
-                        logger.info("Login successful!")
+                        COOKIE_FILE.write_text("; ".join(f"{co['name']}={co['value']}" for co in cookies))
+                        logger.info("Login detected!")
                         return True
             return False
         finally:
             await page.close()
+
+    async def login_with_visible_browser(self) -> bool:
+        """Open a visible browser for manual login, then extract cookies.
+
+        Works even when the main browser is headless.
+        """
+        logger.info("Opening visible browser for Zhihu login...")
+        pw = await async_playwright().start()
+        try:
+            browser = await pw.chromium.launch(
+                headless=False,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = await browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent=random.choice(USER_AGENTS),
+                locale="zh-CN",
+            )
+            page = await ctx.new_page()
+            await page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
+
+            logger.info("Waiting for login (up to 120s)...")
+            for _ in range(120):
+                await asyncio.sleep(1)
+                cookies = await ctx.cookies(BASE_URL)
+                for c in cookies:
+                    if c["name"] == "z_c0" and c["value"]:
+                        cookie_str = "; ".join(f"{co['name']}={co['value']}" for co in cookies)
+                        self._parse_cookie_string(cookie_str)
+                        COOKIE_FILE.write_text(cookie_str)
+                        logger.info("Login successful!")
+                        await browser.close()
+                        await pw.stop()
+                        return True
+            await browser.close()
+            return False
+        finally:
+            await pw.stop()
 
     # ---- HTTP helpers (cookie-based, like zhihuapi) ----
 

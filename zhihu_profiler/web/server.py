@@ -277,6 +277,27 @@ async def set_cookie(data: dict):
     return {"ok": True, "authenticated": True}
 
 
+@app.post("/api/login")
+async def start_login():
+    """Open a visible browser for Zhihu login. Cookies auto-saved on success."""
+    scraper = await get_scraper()
+
+    # Check if already logged in
+    if scraper._z_c0:
+        return {"ok": True, "message": "Already logged in"}
+
+    # Run login in background
+    async def do_login():
+        try:
+            result = await scraper.login_with_visible_browser()
+            logger.info("Login flow completed: %s", result)
+        except Exception as e:
+            logger.error("Login failed: %s", e)
+
+    asyncio.create_task(do_login())
+    return {"ok": True, "message": "Browser opened — please log in to Zhihu"}
+
+
 # Serve static files
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
