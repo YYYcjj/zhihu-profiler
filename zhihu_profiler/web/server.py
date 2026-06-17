@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
 from ..scraper.zhihu import ZhihuScraper
@@ -241,9 +241,18 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
+# Read index HTML at startup for fast serving
+_index_html: str = ""
+_index_path = static_dir / "index.html"
+if _index_path.exists():
+    _index_html = _index_path.read_text(encoding="utf-8")
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
+    if _index_html:
+        return HTMLResponse(_index_html)
     return FileResponse(str(static_dir / "index.html"))
 
 
