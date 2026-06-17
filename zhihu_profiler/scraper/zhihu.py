@@ -38,16 +38,6 @@ Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
 window.chrome = { runtime: {} };
 """
 
-# zhihuapi answer include params (tested working)
-ANSWERS_INCLUDE = (
-    "data[*].is_normal,admin_closed_comment,reward_info,is_collapsed,"
-    "annotation_action,annotation_detail,collapse_reason,collapsed_by,"
-    "suggest_edit,comment_count,can_comment,content,editable_content,"
-    "attachment,voteup_count,reshipment_settings,comment_permission,"
-    "mark_infos,created_time,updated_time,review_info,"
-    "question.detail,question.excerpt,question.topics"
-)
-
 
 class ZhihuScraper:
     def __init__(
@@ -191,11 +181,11 @@ class ZhihuScraper:
             bio=data.get("bio", ""),
             avatar_url=data.get("avatar_url_template", "").replace("{size}", "xl"),
             gender=data.get("gender", -1),
-            follower_count=data.get("follower_count", 0),
-            answer_count=data.get("answer_count", 0),
-            article_count=data.get("articles_count", 0),
-            voteup_count=data.get("voteup_count", 0),
-            thanked_count=data.get("thanked_count", 0),
+            follower_count=data.get("follower_count") or 0,
+            answer_count=data.get("answer_count") or 0,
+            article_count=data.get("articles_count") or 0,
+            voteup_count=data.get("voteup_count") or 0,
+            thanked_count=data.get("thanked_count") or 0,
             locations=[loc.get("name", "") for loc in data.get("locations", [])],
             businesses=[biz.get("name", "") for biz in data.get("business", {}).get("list", [])],
             educations=[edu.get("school", {}).get("name", "") for edu in data.get("educations", [])],
@@ -203,59 +193,100 @@ class ZhihuScraper:
         )
 
     async def _fetch_answers(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
-        answers = []
+        """Two-step: list API for IDs, then individual API for content.
+
+        Zhihu's answer list API no longer returns content — only metadata.
+        We must fetch each answer individually via /api/v4/answers/{id}.
+        """
+        # Step 1: Fetch answer metadata list
+        summaries = []
         offset = 0
         page = 0
 
-        while len(answers) < max_items:
+        while len(summaries) < max_items:
             params = {
                 "offset": offset,
                 "limit": 20,
                 "sort_by": "created",
-                "include": ANSWERS_INCLUDE,
             }
             try:
                 data = await self._api_get(f"/api/v4/members/{user_id}/answers", params)
             except Exception as e:
-                logger.error("API error at offset %d: %s", offset, e)
+                logger.error("List API error at offset %d: %s", offset, e)
                 break
 
             items = data.get("data", [])
             paging = data.get("paging", {})
-
             if not items:
                 break
 
-            for item in items:
-                question = item.get("question", {})
-                content = item.get("content", "")
-
-                if not content:
-                    continue
-
-                answers.append(ZhihuAnswer(
-                    id=item.get("id", 0),
-                    question_id=question.get("id", 0),
-                    question_title=question.get("title", ""),
-                    content=self._strip_html(content),
-                    excerpt=item.get("excerpt", ""),
-                    voteup_count=item.get("voteup_count", 0),
-                    comment_count=item.get("comment_count", 0),
-                    created_time=self._ts(item.get("created_time")),
-                    updated_time=self._ts(item.get("updated_time")),
-                    question_topics=[t.get("name", "") for t in (question.get("topics") or [])],
-                    url=f"{BASE_URL}/question/{question.get('id')}/answer/{item.get('id')}",
-                ))
-
+            summaries.extend(items)
             offset += 20
             page += 1
-            logger.info("Page %d: %d answers total", page, len(answers))
+            logger.info("List page %d: %d answers total", page, len(summaries))
 
             if paging.get("is_end"):
                 break
             await asyncio.sleep(random.uniform(*self.delay_range))
 
+        if not summaries:
+            return []
+
+        # Step 2: Fetch full content for each answer (batched)
+        logger.info("Fetching content for %d answers...", len(summaries))
+        answers = []
+        batch_size = 5  # Parallel requests per batch
+
+        for i in range(0, len(summaries), batch_size):
+            batch = summaries[i:i + batch_size]
+            tasks = [self._fetch_answer_content(item) for item in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for j, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning("Answer %s failed: %s", batch[j].get("id", "?"), result)
+                    continue
+                if result:
+                    answers.append(result)
+
+            logger.info("Content: %d/%d answers", len(answers), len(summaries))
+            await asyncio.sleep(random.uniform(*self.delay_range))
+
         return answers
+
+    async def _fetch_answer_content(self, item: dict) -> Optional[ZhihuAnswer]:
+        """Fetch individual answer content via /api/v4/answers/{id}."""
+        aid = item.get("id")
+        if not aid:
+            return None
+
+        question = item.get("question", {})
+        try:
+            full = await self._api_get(
+                f"/api/v4/answers/{aid}",
+                params={"include": "content,excerpt,is_normal,created_time,updated_time,voteup_count,comment_count"}
+            )
+        except Exception as e:
+            logger.warning("Answer %d fetch failed: %s", aid, e)
+            return None
+
+        content = full.get("content", "")
+        if not content:
+            return None
+
+        return ZhihuAnswer(
+            id=aid,
+            question_id=question.get("id", 0),
+            question_title=question.get("title", ""),
+            content=self._strip_html(content),
+            excerpt=full.get("excerpt", ""),
+            voteup_count=full.get("voteup_count", 0),
+            comment_count=full.get("comment_count", 0),
+            created_time=self._ts(full.get("created_time") or item.get("created_time")),
+            updated_time=self._ts(full.get("updated_time")),
+            question_topics=[t.get("name", "") for t in (question.get("topics") or [])],
+            url=f"{BASE_URL}/question/{question.get('id')}/answer/{aid}",
+        )
 
     async def _scrape_via_dom(self, user_id: str, max_items: int) -> list[ZhihuAnswer]:
         """DOM fallback for when API doesn't have auth."""
@@ -330,8 +361,9 @@ class ZhihuScraper:
 
         # Answers
         answers = []
-        if user.answer_count > 0:
-            target = min(self.max_answers, user.answer_count)
+        answer_count = user.answer_count or 0
+        if answer_count > 0 or True:  # Always try scraping
+            target = min(self.max_answers, max(answer_count, self.max_answers))
 
             if self._z_c0:
                 # Authenticated API
