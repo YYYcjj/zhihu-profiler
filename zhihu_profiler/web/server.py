@@ -318,6 +318,18 @@ async def start_login():
     return {"ok": True, "message": "Browser opened — please log in to Zhihu"}
 
 
+PUBLIC_URL_FILE = Path(__file__).parent.parent.parent / ".public_url"
+
+
+@app.get("/api/public-url")
+async def public_url():
+    if PUBLIC_URL_FILE.exists():
+        url = PUBLIC_URL_FILE.read_text().strip()
+        if url:
+            return {"url": f"http://{url}", "lan_url": "http://192.168.1.6:8765"}
+    return {"url": "http://localhost:8765", "lan_url": "http://192.168.1.6:8765"}
+
+
 # Serve static files
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():

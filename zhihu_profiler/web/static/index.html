@@ -280,6 +280,10 @@ body {
     <div style="margin-top:8px;font-size:0.78em;color:var(--text-secondary);">
       <span>桌面端可</span><a href="javascript:startLogin()" style="color:var(--primary);">一键登录</a><span>，手机端点</span><a href="javascript:document.getElementById('cookieCard').style.display='block'" style="color:var(--primary);">手动粘贴 Cookie</a>
     </div>
+    <div id="publicUrlBox" style="margin-top:6px;font-size:0.85em;padding:8px 16px;border-radius:8px;background:#f0e6ff;display:none;">
+      <span style="color:var(--primary);font-weight:500;">公网地址</span>
+      <a id="publicUrlLink" href="#" target="_blank" style="color:var(--primary);margin-left:4px;"></a>
+    </div>
   </div>
 
   <div class="input-card" id="cookieCard" style="display:none; padding:20px 28px;">
@@ -556,6 +560,23 @@ document.getElementById('urlInput').addEventListener('keydown', function(e) {
 // Load history and check auth on page load
 loadHistory();
 checkAuth();
+fetchPublicUrl();
+
+async function fetchPublicUrl() {
+  try {
+    const res = await fetch(`${API}/api/public-url`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.url && data.url !== 'http://localhost:8765') {
+        const box = document.getElementById('publicUrlBox');
+        const link = document.getElementById('publicUrlLink');
+        box.style.display = 'block';
+        link.href = data.url;
+        link.textContent = data.url;
+      }
+    }
+  } catch(e) {}
+}
 
 async function checkAuth() {
   try {
