@@ -173,18 +173,22 @@ async def get_job_status(job_id: str):
 @app.get("/api/analyze/{job_id}/report")
 async def get_report(job_id: str):
     """Get the HTML report for a completed analysis."""
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Check in-memory first
+    if job_id in jobs:
+        job = jobs[job_id]
+        if job["status"] == "completed":
+            report_path = job.get("report_path", "")
+            if report_path and Path(report_path).exists():
+                return FileResponse(report_path)
 
-    job = jobs[job_id]
-    if job["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Analysis not completed")
+    # Fall back to disk
+    report_dir = STORAGE_DIR / job_id
+    if report_dir.exists():
+        reports = sorted(report_dir.glob("*.html"))
+        if reports:
+            return FileResponse(str(reports[0]))
 
-    report_path = job.get("report_path", "")
-    if not report_path or not Path(report_path).exists():
-        raise HTTPException(status_code=404, detail="Report file not found")
-
-    return FileResponse(report_path)
+    raise HTTPException(status_code=404, detail="Job not found")
 
 
 @app.get("/api/history")
@@ -238,14 +242,30 @@ async def delete_analysis(analysis_id: str):
 @app.get("/api/analyze/{job_id}/profile")
 async def get_profile(job_id: str):
     """Get structured profile data."""
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Check in-memory first
+    if job_id in jobs:
+        job = jobs[job_id]
+        if job["status"] == "completed":
+            return job.get("profile", {})
 
-    job = jobs[job_id]
-    if job["status"] != "completed":
+    # Fall back to disk
+    json_path = STORAGE_DIR / job_id / "profile.json"
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            profile = json.load(f)
+        return {
+            "name": profile.get("user", {}).get("name", ""),
+            "answers": profile.get("total_answers", 0),
+            "chars": profile.get("total_chars", 0),
+            "upvotes": profile.get("total_upvotes", 0),
+            "summary": profile.get("summary", ""),
+        }
+
+    # Also check in-memory for non-completed jobs
+    if job_id in jobs:
         raise HTTPException(status_code=400, detail="Analysis not completed")
 
-    return job.get("profile", {})
+    raise HTTPException(status_code=404, detail="Job not found")
 
 
 @app.get("/api/auth-status")
