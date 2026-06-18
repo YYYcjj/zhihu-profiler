@@ -208,10 +208,10 @@ class ProfessionalAnalyzer:
         top_domains = [t for t, _ in topic_counter.most_common(5)]
 
         return SkillProfile(
-            hard_skills=[d for d, s in hard.most_common(4)],
-            soft_skills=[c for c, s in soft.most_common(4)],
+            hard_skills=[d for d, s in Counter(hard).most_common(4)],
+            soft_skills=[c for c, s in Counter(soft).most_common(4)],
             expertise_domains=top_domains,
-            summary=self._skill_summary(hard, soft, top_domains),
+            summary=self._skill_summary(Counter(hard), Counter(soft), top_domains),
         )
 
     def _skill_summary(self, hard: Counter, soft: Counter, domains: list[str]) -> str:
