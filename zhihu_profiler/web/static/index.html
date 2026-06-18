@@ -277,6 +277,21 @@ body {
     <h1>Zhihu Profiler</h1>
     <p>输入知乎用户链接，AI 自动生成深度人格画像</p>
     <div id="authStatus" style="margin-top:12px;font-size:0.85em;padding:6px 16px;border-radius:20px;display:inline-block;background:#fff5f3;color:#e17055;">未登录知乎 · 可能无法获取完整内容</div>
+    <div style="margin-top:8px;font-size:0.78em;color:var(--text-secondary);">
+      <span>桌面端可</span><a href="javascript:startLogin()" style="color:var(--primary);">一键登录</a><span>，手机端点</span><a href="javascript:document.getElementById('cookieCard').style.display='block'" style="color:var(--primary);">手动粘贴 Cookie</a>
+    </div>
+  </div>
+
+  <div class="input-card" id="cookieCard" style="display:none; padding:20px 28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-weight:600;color:var(--text);">手动设置 Cookie</span>
+      <button class="btn btn-sm btn-outline" onclick="document.getElementById('cookieCard').style.display='none'">✕</button>
+    </div>
+    <p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:10px;">在浏览器中登录知乎后，打开 DevTools → Network → 点任意请求 → Request Headers → 复制 Cookie 整行</p>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="cookieInput" placeholder="粘贴 cookie 字符串..." style="flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:0.85em;">
+      <button class="btn btn-sm btn-primary" onclick="setCookie()">设置</button>
+    </div>
   </div>
 
   <div class="input-card">
@@ -597,6 +612,28 @@ async function startLogin() {
     el.innerHTML = '连接失败 · 点击重试';
     el.style.cursor = 'pointer';
     el.onclick = startLogin;
+  }
+}
+
+async function setCookie() {
+  const cookie = document.getElementById('cookieInput').value.trim();
+  if (!cookie) return;
+  try {
+    const res = await fetch(`${API}/api/set-cookie`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie })
+    });
+    if (res.ok) {
+      document.getElementById('cookieCard').style.display = 'none';
+      document.getElementById('cookieInput').value = '';
+      checkAuth();
+    } else {
+      const err = await res.json();
+      showError('Cookie 无效: ' + (err.detail || '请确保包含 z_c0'));
+    }
+  } catch(e) {
+    showError('设置失败: ' + e.message);
   }
 }
 </script>
