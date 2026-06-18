@@ -16,6 +16,8 @@ from .personality import PersonalityAnalyzer, PersonalityProfile
 from .interests import InterestAnalyzer, InterestProfile
 from .values import ValueAnalyzer, ValueProfile
 from .style import StyleAnalyzer, StyleProfile
+from .timeline import TimelineBuilder, PersonalTimeline
+from .evolution import EvolutionAnalyzer, ThoughtEvolution
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,10 @@ class UserProfile:
     style: Optional[dict] = None
     sentiment: Optional[dict] = None
 
+    # Deep analysis
+    timeline: Optional[dict] = None
+    evolution: Optional[dict] = None
+
     # Meta
     keywords: list[tuple[str, float]] = field(default_factory=list)
     summary: str = ""
@@ -63,6 +69,8 @@ class Profiler:
         self.interest_analyzer = InterestAnalyzer() if enable_interests else None
         self.value_analyzer = ValueAnalyzer() if enable_values else None
         self.style_analyzer = StyleAnalyzer() if enable_style else None
+        self.timeline_builder = TimelineBuilder()
+        self.evolution_analyzer = EvolutionAnalyzer()
 
         self.modules_enabled = {
             "sentiment": enable_sentiment,
@@ -176,6 +184,44 @@ class Profiler:
                 "summary": style.summary,
             }
 
+        # 7. Personal timeline
+        logger.info("Building personal timeline...")
+        timeline = self.timeline_builder.build(data.answers)
+        profile.timeline = {
+            "events": [
+                {
+                    "date": e.date_str or (e.date.strftime("%Y-%m") if e.date else ""),
+                    "category": e.category,
+                    "description": e.description,
+                    "answer_title": e.answer_title,
+                }
+                for e in timeline.events[:20]
+            ],
+            "phases": timeline.phases,
+            "key_turns": timeline.key_turns[:10],
+            "summary": timeline.summary,
+        }
+
+        # 8. Thought evolution
+        logger.info("Analyzing thought evolution...")
+        evolution = self.evolution_analyzer.analyze(data.answers)
+        profile.evolution = {
+            "points": [
+                {
+                    "period": p.period,
+                    "topics": p.dominant_topics,
+                    "sentiment": p.sentiment_score,
+                    "avg_length": p.avg_answer_length,
+                    "answer_count": p.answer_count,
+                    "transition_phrases": p.key_phrases,
+                }
+                for p in evolution.evolution_points
+            ],
+            "sentiment_trend": evolution.sentiment_trend,
+            "length_trend": evolution.length_trend,
+            "summary": evolution.summary,
+        }
+
         # Generate overall summary
         profile.summary = self._generate_overall_summary(profile)
 
@@ -219,6 +265,16 @@ class Profiler:
         if profile.style:
             parts.append(f"\n## 表达风格")
             parts.append(profile.style.get("summary", ""))
+
+        # Timeline
+        if profile.timeline:
+            parts.append(f"\n## 个人时间线")
+            parts.append(profile.timeline.get("summary", ""))
+
+        # Evolution
+        if profile.evolution:
+            parts.append(f"\n## 思想演变")
+            parts.append(profile.evolution.get("summary", ""))
 
         return "\n".join(parts)
 
