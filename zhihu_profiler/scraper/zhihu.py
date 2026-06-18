@@ -196,8 +196,15 @@ class ZhihuScraper:
         url = f"{BASE_URL}{path}"
         async with httpx.AsyncClient(timeout=20, limits=httpx.Limits(max_connections=20)) as client:
             resp = await client.get(url, headers=self._api_headers(), params=params)
-            if resp.status_code == 401 or resp.status_code == 403:
-                logger.warning("API auth failed (status %d)", resp.status_code)
+            if resp.status_code == 401:
+                logger.warning("Cookie expired (401) — clearing credentials")
+                self._z_c0 = ""
+                self._cookies = {}
+                if COOKIE_FILE.exists():
+                    COOKIE_FILE.unlink()
+                raise PermissionError("Cookie expired — please re-login")
+            if resp.status_code == 403:
+                logger.warning("API auth failed (status 403)")
             resp.raise_for_status()
             return resp.json()
 

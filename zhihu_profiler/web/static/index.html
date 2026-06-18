@@ -590,6 +590,12 @@ async function checkAuth() {
         el.style.color = '#00b894';
         el.style.cursor = 'default';
         el.onclick = null;
+      } else if (data.reason && data.reason.includes('expired')) {
+        el.innerHTML = 'Cookie 已过期 · 点击重新登录';
+        el.style.background = '#fff3cd';
+        el.style.color = '#e17055';
+        el.style.cursor = 'pointer';
+        el.onclick = startLogin;
       } else {
         el.innerHTML = '未登录知乎 · 点击自动登录';
         el.style.cursor = 'pointer';

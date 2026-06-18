@@ -270,12 +270,34 @@ async def get_profile(job_id: str):
 
 @app.get("/api/auth-status")
 async def auth_status():
-    """Check if the scraper has valid Zhihu cookies."""
+    """Check if the scraper has valid Zhihu cookies (verify against API)."""
     try:
         scraper = await get_scraper()
-        return {"authenticated": bool(scraper._z_c0), "has_cookies": len(scraper._cookies) > 0}
-    except Exception:
-        return {"authenticated": False, "has_cookies": False}
+        if not scraper._z_c0:
+            return {"authenticated": False, "has_cookies": False, "reason": "no z_c0"}
+
+        # Verify cookie is actually valid by calling a simple API
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://www.zhihu.com/api/v4/me",
+                headers={
+                    "Cookie": "; ".join(f"{k}={v}" for k, v in scraper._cookies.items()),
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                }
+            )
+            if resp.status_code == 200:
+                return {"authenticated": True, "has_cookies": True}
+            else:
+                # Cookie expired — clean up
+                scraper._z_c0 = ""
+                scraper._cookies = {}
+                from ..scraper.zhihu import COOKIE_FILE
+                if COOKIE_FILE.exists():
+                    COOKIE_FILE.unlink()
+                return {"authenticated": False, "has_cookies": False, "reason": f"cookie expired (HTTP {resp.status_code})"}
+    except Exception as e:
+        return {"authenticated": False, "has_cookies": False, "reason": str(e)[:100]}
 
 
 @app.post("/api/set-cookie")
