@@ -19,6 +19,7 @@ from .style import StyleAnalyzer, StyleProfile
 from .timeline import TimelineBuilder, PersonalTimeline
 from .evolution import EvolutionAnalyzer, ThoughtEvolution
 from .concrete import ConcreteExtractor, ConcreteProfile
+from .professional import ProfessionalAnalyzer, ProfessionalImage
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class UserProfile:
     timeline: Optional[dict] = None
     evolution: Optional[dict] = None
     concrete: Optional[dict] = None
+    professional: Optional[dict] = None
 
     # Meta
     keywords: list[tuple[str, float]] = field(default_factory=list)
@@ -74,6 +76,7 @@ class Profiler:
         self.timeline_builder = TimelineBuilder()
         self.evolution_analyzer = EvolutionAnalyzer()
         self.concrete_extractor = ConcreteExtractor()
+        self.professional_analyzer = ProfessionalAnalyzer()
 
         self.modules_enabled = {
             "sentiment": enable_sentiment,
@@ -240,6 +243,36 @@ class Profiler:
             "narrative_summary": concrete.narrative_summary,
         }
 
+        # 10. Professional image
+        logger.info("Analyzing professional image...")
+        professional = self.professional_analyzer.analyze(data.answers)
+        profile.professional = {
+            "career_stage": {
+                "level": professional.career_stage.level,
+                "years": professional.career_stage.years_exp,
+                "summary": professional.career_stage.summary,
+            },
+            "skills": {
+                "hard": professional.skills.hard_skills,
+                "soft": professional.skills.soft_skills,
+                "domains": professional.skills.expertise_domains,
+                "summary": professional.skills.summary,
+            },
+            "work_values": {
+                "motivations": professional.work_values.motivations,
+                "preferences": professional.work_values.preferences,
+                "attitudes": professional.work_values.attitudes,
+                "summary": professional.work_values.summary,
+            },
+            "industry_insight": {
+                "industries": professional.industry_insight.industries,
+                "depth": professional.industry_insight.depth_score,
+                "summary": professional.industry_insight.summary,
+            },
+            "quotes": professional.professional_quotes,
+            "summary": professional.summary,
+        }
+
         # Generate overall summary
         profile.summary = self._generate_overall_summary(profile)
 
@@ -300,6 +333,11 @@ class Profiler:
             if ns.strip():
                 parts.append(f"\n## 具体画像")
                 parts.append(ns)
+
+        # Professional image
+        if profile.professional:
+            parts.append(f"\n## 职业形象")
+            parts.append(profile.professional.get("summary", ""))
 
         return "\n".join(parts)
 
