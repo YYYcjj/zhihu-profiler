@@ -18,6 +18,7 @@ from .values import ValueAnalyzer, ValueProfile
 from .style import StyleAnalyzer, StyleProfile
 from .timeline import TimelineBuilder, PersonalTimeline
 from .evolution import EvolutionAnalyzer, ThoughtEvolution
+from .concrete import ConcreteExtractor, ConcreteProfile
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class UserProfile:
     # Deep analysis
     timeline: Optional[dict] = None
     evolution: Optional[dict] = None
+    concrete: Optional[dict] = None
 
     # Meta
     keywords: list[tuple[str, float]] = field(default_factory=list)
@@ -71,6 +73,7 @@ class Profiler:
         self.style_analyzer = StyleAnalyzer() if enable_style else None
         self.timeline_builder = TimelineBuilder()
         self.evolution_analyzer = EvolutionAnalyzer()
+        self.concrete_extractor = ConcreteExtractor()
 
         self.modules_enabled = {
             "sentiment": enable_sentiment,
@@ -222,6 +225,21 @@ class Profiler:
             "summary": evolution.summary,
         }
 
+        # 9. Concrete details + representative quotes
+        logger.info("Extracting concrete details...")
+        concrete = self.concrete_extractor.extract(data.answers)
+        profile.concrete = {
+            "bio_facts": [
+                {"label": f.label, "value": f.value, "source": f.source_answer}
+                for f in concrete.bio_facts
+            ],
+            "quotes": [
+                {"text": q.text, "title": q.answer_title, "trait": q.trait}
+                for q in concrete.quotes
+            ],
+            "narrative_summary": concrete.narrative_summary,
+        }
+
         # Generate overall summary
         profile.summary = self._generate_overall_summary(profile)
 
@@ -275,6 +293,13 @@ class Profiler:
         if profile.evolution:
             parts.append(f"\n## 思想演变")
             parts.append(profile.evolution.get("summary", ""))
+
+        # Concrete details
+        if profile.concrete:
+            ns = profile.concrete.get("narrative_summary", "")
+            if ns.strip():
+                parts.append(f"\n## 具体画像")
+                parts.append(ns)
 
         return "\n".join(parts)
 

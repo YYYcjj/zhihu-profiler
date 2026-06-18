@@ -270,6 +270,18 @@ class ZhihuScraper:
         if not summaries:
             return []
 
+        # Deduplicate by answer ID
+        seen = set()
+        deduped = []
+        for s in summaries:
+            aid = s.get("id")
+            if aid and aid not in seen:
+                seen.add(aid)
+                deduped.append(s)
+        if len(deduped) < len(summaries):
+            logger.info("Removed %d duplicate answers", len(summaries) - len(deduped))
+        summaries = deduped
+
         # Step 2: Fetch full content for each answer (batched parallel)
         logger.info("Fetching content for %d answers...", len(summaries))
         answers = []
